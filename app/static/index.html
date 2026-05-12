@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Incident Triage Agent</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; color: #222; }
+      header { background: #1a1a2e; color: #fff; padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem; }
+      header h1 { margin: 0; font-size: 1.3rem; flex: 1; }
+      .mode-pill {
+        padding: 0.3rem 0.9rem; border-radius: 20px; font-size: 0.82rem; font-weight: bold;
+        border: none; cursor: pointer; transition: background 0.2s;
+      }
+      .mode-pill.mock { background: #3fb950; color: #fff; }
+      .mode-pill.llm  { background: #58a6ff; color: #fff; }
+      .container { max-width: 1060px; margin: 1.5rem auto; padding: 0 1rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+      .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 1.1rem 1.3rem; }
+      .card h3 { margin: 0 0 0.8rem; font-size: 1rem; color: #444; }
+      .row { display: flex; gap: 0.6rem; margin-bottom: 0.6rem; }
+      input, textarea { padding: 0.5rem 0.7rem; font-size: 0.9rem; border: 1px solid #ccc; border-radius: 6px; }
+      button { padding: 0.5rem 1rem; font-size: 0.9rem; border: none; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+      .btn-primary { background: #1a1a2e; color: #fff; }
+      .btn-success { background: #22863a; color: #fff; }
+      .btn-danger  { background: #cb2431; color: #fff; }
+      .btn-neutral { background: #eee; color: #444; }
+      .btn-warn    { background: #f0a500; color: #fff; }
+      .status-badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 20px; font-size: 0.8rem; font-weight: bold; }
+      .status-running   { background: #cce5ff; color: #004085; }
+      .status-paused    { background: #fff3cd; color: #856404; }
+      .status-completed { background: #d4edda; color: #155724; }
+      .status-failed    { background: #f8d7da; color: #721c24; }
+      .status-idle      { background: #e9ecef; color: #495057; }
+      .timeline { max-height: 420px; overflow-y: auto; background: #0d1117; border-radius: 8px; padding: 0.8rem; font-family: monospace; font-size: 0.8rem; color: #c9d1d9; }
+      .evt-line { margin: 0.25rem 0; padding: 0.2rem 0; border-bottom: 1px solid #161b22; }
+      .evt-ts { color: #585f69; margin-right: 0.5rem; }
+      .evt-name { color: #58a6ff; margin-right: 0.5rem; }
+      .evt-data { color: #8b949e; }
+      .evt-heartbeat .evt-name  { color: #3fb950; }
+      .evt-stream_end .evt-name { color: #f78166; }
+      .evt-clarification_requested .evt-name { color: #f0a500; }
+      .evt-synthetic_generated .evt-name { color: #bc8cff; }
+      .full-width { grid-column: 1 / -1; }
+      .interrupt-box { border-radius: 8px; padding: 1rem; margin-top: 0.8rem; display: none; }
+      .interrupt-box.visible { display: block; }
+      .interrupt-box.approval      { border: 2px solid #f0a500; background: #fffbea; }
+      .interrupt-box.clarification { border: 2px solid #58a6ff; background: #e8f4fd; }
+      .interrupt-box h4 { margin: 0 0 0.4rem; }
+      .interrupt-box.approval h4      { color: #856404; }
+      .interrupt-box.clarification h4 { color: #0050b3; }
+      pre.proposal { margin: 0.4rem 0; background: rgba(0,0,0,0.05); padding: 0.5rem; border-radius: 4px; font-size: 0.78rem; overflow: auto; max-height: 200px; }
+      .run-id-display { font-family: monospace; font-size: 0.8rem; color: #555; margin-top: 0.5rem; }
+      .mode-indicator { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 12px; font-size: 0.75rem; font-weight: bold; margin-left: 0.4rem; }
+      .mode-indicator.mock { background: #d4edda; color: #155724; }
+      .mode-indicator.llm  { background: #cce5ff; color: #004085; }
+      .backend-indicator { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 12px; font-size: 0.75rem; font-weight: bold; margin-left: 0.4rem; background: #f1f3f5; color: #333; }
+      .warning-banner { margin-top: 0.6rem; background: #fff3cd; border: 1px solid #f0d98a; color: #856404; border-radius: 6px; padding: 0.45rem 0.6rem; font-size: 0.82rem; display: none; }
+      .warning-banner.visible { display: block; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>⚡ Single-Agent Incident Triage</h1>
+      <div>
+        <button id="modeBtn" class="mode-pill mock" onclick="toggleMode()">🤖 Mock Mode</button>
+      </div>
+    </header>
+
+    <div class="container">
+      <!-- Create run -->
+      <div class="card">
+        <h3>Start a New Run</h3>
+        <div class="row">
+          <input id="service" placeholder="service" value="checkout-service" style="flex:1" />
+          <input id="env" placeholder="env" value="prod" style="width:80px;flex:none" />
+        </div>
+        <div class="row">
+          <input id="objective" style="flex:1" value="Investigate high 5xx and propose safe remediation" />
+        </div>
+        <button class="btn-primary" onclick="createRun()">▶ Start Run</button>
+        <div class="run-id-display" id="runLabel"></div>
+      </div>
+
+      <!-- Status + controls -->
+      <div class="card">
+        <h3>Run Controls</h3>
+        <div class="row">
+          <input id="runIdInput" placeholder="run id (auto-filled)" style="flex:1" />
+          <button class="btn-neutral" onclick="refreshState()">↻ Refresh</button>
+        </div>
+        <div>
+          Status: <span id="statusBadge" class="status-badge status-idle">idle</span>
+          &nbsp;Phase: <span id="phaseLabel" style="font-size:0.85rem;color:#555">—</span>
+          <span id="modeIndicator" class="mode-indicator mock">mock</span>
+          <span id="backendIndicator" class="backend-indicator">backend: unknown</span>
+        </div>
+        <div id="llmWarning" class="warning-banner"></div>
+
+        <!-- Approval interrupt -->
+        <div class="interrupt-box approval" id="approvalBox">
+          <h4>⏸ Action Approval Required</h4>
+          <pre class="proposal" id="proposalText"></pre>
+          <div class="row" style="margin-top:0.6rem">
+            <button class="btn-success" onclick="sendApproval('approved')">✔ Approve</button>
+            <button class="btn-danger"  onclick="sendApproval('rejected')">✘ Reject</button>
+          </div>
+        </div>
+
+        <!-- Clarification interrupt (LLM mode) -->
+        <div class="interrupt-box clarification" id="clarificationBox">
+          <h4>❓ Agent Needs Clarification</h4>
+          <p id="clarificationQuestion" style="margin:0.3rem 0;font-style:italic;color:#333"></p>
+          <input id="clarificationField" type="hidden" />
+          <div class="row">
+            <input id="clarificationAnswer" style="flex:1" placeholder="Your answer (leave blank to auto-generate)" />
+          </div>
+          <div class="row">
+            <button class="btn-success" onclick="sendClarification(false)">Submit Answer</button>
+            <button class="btn-warn"    onclick="sendClarification(true)">✨ Auto-Generate</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live timeline -->
+      <div class="card full-width">
+        <h3>Live Event Timeline <span id="streamStatus" style="font-size:0.78rem;color:#888"></span></h3>
+        <div class="timeline" id="timeline"><span style="color:#585f69">Waiting for events…</span></div>
+      </div>
+    </div>
+
+    <script>
+      let currentMode = 'mock';
+      let currentRunId = '';
+      let eventSource = null;
+      let currentBackend = 'unknown';
+
+      function pretty(v) { return JSON.stringify(v, null, 2); }
+
+      function toggleMode() {
+        currentMode = currentMode === 'mock' ? 'llm' : 'mock';
+        const btn = document.getElementById('modeBtn');
+        if (currentMode === 'llm') {
+          btn.textContent = '🧠 LLM Mode';
+          btn.className = 'mode-pill llm';
+        } else {
+          btn.textContent = '🤖 Mock Mode';
+          btn.className = 'mode-pill mock';
+        }
+      }
+
+      function setStatus(status, mode) {
+        const badge = document.getElementById('statusBadge');
+        badge.textContent = status || 'idle';
+        badge.className = 'status-badge status-' + (status || 'idle');
+        if (mode) {
+          const ind = document.getElementById('modeIndicator');
+          ind.textContent = mode;
+          ind.className = 'mode-indicator ' + mode;
+        }
+        const b = document.getElementById('backendIndicator');
+        b.textContent = 'backend: ' + currentBackend;
+      }
+
+      function setWarning(message) {
+        const w = document.getElementById('llmWarning');
+        if (message) {
+          w.textContent = message;
+          w.classList.add('visible');
+        } else {
+          w.textContent = '';
+          w.classList.remove('visible');
+        }
+      }
+
+      function appendEvent(evt) {
+        const tl = document.getElementById('timeline');
+        if (tl.innerHTML.includes('Waiting for events')) tl.innerHTML = '';
+        const cls  = evt.event ? `evt-${evt.event}` : '';
+        const ts   = evt.ts   ? evt.ts.slice(11, 19) : '';
+        const data = evt.data && Object.keys(evt.data).length ? JSON.stringify(evt.data) : '';
+        const line = document.createElement('div');
+        line.className = `evt-line ${cls}`;
+        line.innerHTML = `<span class="evt-ts">${ts}</span><span class="evt-name">${evt.event || '?'}</span><span class="evt-data">${data}</span>`;
+        tl.appendChild(line);
+        tl.scrollTop = tl.scrollHeight;
+      }
+
+      function updateInterruptUI(values) {
+        const pending = values.pending_interrupt || {};
+        const itype   = pending.type || '';
+        const approvalBox = document.getElementById('approvalBox');
+        const clarBox = document.getElementById('clarificationBox');
+
+        approvalBox.classList.remove('visible');
+        clarBox.classList.remove('visible');
+
+        if (values.status !== 'paused') return;
+
+        if (itype === 'approve_action') {
+          const proposal = pending.proposal || values.proposed_action || (values.memory && values.memory.proposed_action) || {};
+          const hypothesis = pending.hypothesis || (values.memory && values.memory.chosen_hypothesis) || {};
+          document.getElementById('proposalText').textContent = pretty({ hypothesis, proposal });
+          approvalBox.classList.add('visible');
+
+        } else if (itype === 'clarification_required') {
+          document.getElementById('clarificationQuestion').textContent = pending.question || '?';
+          document.getElementById('clarificationField').value = pending.field || '';
+          document.getElementById('clarificationAnswer').value = '';
+          clarBox.classList.add('visible');
+
+        } else if (itype === 'escalation_decision') {
+          // Reuse approval box for escalation
+          document.getElementById('proposalText').textContent =
+            'Verification failed.\n' + (pending.message || 'Reinvestigate or escalate?');
+          approvalBox.classList.add('visible');
+          // Override buttons for escalation
+        }
+      }
+
+      function startSSE(runId) {
+        if (eventSource) { eventSource.close(); eventSource = null; }
+        document.getElementById('timeline').innerHTML = '<span style="color:#585f69">Connecting stream…</span>';
+        document.getElementById('streamStatus').textContent = '● streaming';
+
+        eventSource = new EventSource(`/runs/${runId}/events`);
+        eventSource.onmessage = (e) => {
+          const evt = JSON.parse(e.data);
+          appendEvent(evt);
+          if (evt.event === 'stream_end' || evt.event === 'stream_timeout') {
+            document.getElementById('streamStatus').textContent = '○ closed';
+            eventSource.close(); eventSource = null;
+            refreshState();
+          }
+        };
+        eventSource.onerror = () => {
+          document.getElementById('streamStatus').textContent = '○ disconnected';
+          if (eventSource) { eventSource.close(); eventSource = null; }
+        };
+      }
+
+      async function createRun() {
+        const payload = {
+          objective:  document.getElementById('objective').value,
+          service:    document.getElementById('service').value,
+          env:        document.getElementById('env').value,
+          agent_mode: currentMode,
+        };
+        const res  = await fetch('/runs', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+        const data = await res.json();
+        currentRunId = data.run_id || '';
+        currentBackend = data.llm_backend || 'unknown';
+        document.getElementById('runIdInput').value = currentRunId;
+        document.getElementById('runLabel').textContent = currentRunId ? `run_id: ${currentRunId}` : '';
+        setStatus('running', currentMode);
+        if (currentMode === 'llm' && currentBackend === 'mock') {
+          setWarning('LLM mode selected, but backend is mock. Configure LLM_BACKEND=ollama or openai in .env for real inference.');
+        } else {
+          setWarning('');
+        }
+        document.getElementById('phaseLabel').textContent = 'plan';
+        document.getElementById('approvalBox').classList.remove('visible');
+        document.getElementById('clarificationBox').classList.remove('visible');
+        startSSE(currentRunId);
+      }
+
+      async function refreshState() {
+        const runId = document.getElementById('runIdInput').value.trim();
+        if (!runId) return;
+        const res = await fetch(`/runs/${runId}`);
+        if (!res.ok) return;
+        const data   = await res.json();
+        const values = (data.snapshot && data.snapshot.values) || {};
+        currentBackend = values.llm_backend || currentBackend;
+        setStatus(values.status, values.agent_mode);
+        document.getElementById('phaseLabel').textContent = values.parent_phase || '—';
+        setWarning(values.llm_warning || '');
+        updateInterruptUI(values);
+      }
+
+      async function sendApproval(approval) {
+        const runId = document.getElementById('runIdInput').value.trim();
+        if (!runId) return;
+        document.getElementById('approvalBox').classList.remove('visible');
+        await fetch(`/runs/${runId}/resume`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ approval }),
+        });
+        setStatus('running');
+        startSSE(runId);
+      }
+
+      async function sendClarification(useSynthetic) {
+        const runId = document.getElementById('runIdInput').value.trim();
+        if (!runId) return;
+        const field  = document.getElementById('clarificationField').value;
+        const answer = document.getElementById('clarificationAnswer').value.trim();
+        document.getElementById('clarificationBox').classList.remove('visible');
+        await fetch(`/runs/${runId}/resume`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            clarification_field: field,
+            value: useSynthetic || !answer ? null : answer,
+          }),
+        });
+        setStatus('running');
+        startSSE(runId);
+      }
+    </script>
+  </body>
+</html>
+
